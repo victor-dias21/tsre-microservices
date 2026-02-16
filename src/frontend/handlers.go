@@ -496,8 +496,35 @@ func cartSize(c []*pb.CartItem) int {
 }
 
 func renderMoney(money pb.Money) string {
+	if money.GetCurrencyCode() == "BRL" {
+		return fmt.Sprintf("R$ %s", formatBRLAmount(money))
+	}
 	currencyLogo := renderCurrencyLogo(money.GetCurrencyCode())
 	return fmt.Sprintf("%s%d.%02d", currencyLogo, money.GetUnits(), money.GetNanos()/10000000)
+}
+
+func formatBRLAmount(money pb.Money) string {
+	units := money.GetUnits()
+	nanos := money.GetNanos()
+
+	sign := ""
+	if units < 0 || nanos < 0 {
+		sign = "-"
+	}
+
+	if units < 0 {
+		units = -units
+	}
+	if nanos < 0 {
+		nanos = -nanos
+	}
+
+	intPart := strconv.FormatInt(units, 10)
+	for i := len(intPart) - 3; i > 0; i -= 3 {
+		intPart = intPart[:i] + "." + intPart[i:]
+	}
+
+	return fmt.Sprintf("%s%s,%02d", sign, intPart, nanos/10000000)
 }
 
 func renderCurrencyLogo(currencyCode string) string {
@@ -508,6 +535,7 @@ func renderCurrencyLogo(currencyCode string) string {
 		"EUR": "€",
 		"TRY": "₺",
 		"GBP": "£",
+		"BRL": "R$",
 	}
 
 	logo := "$" //default
