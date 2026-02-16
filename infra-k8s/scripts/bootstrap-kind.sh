@@ -332,11 +332,41 @@ run_install_istio() {
 }
 
 run_install_gateway_api() {
-  local gateway_api_version
+  local gateway_api_version crd attempt
   gateway_api_version="v1.2.1"
 
   kubectl apply -f "https://github.com/kubernetes-sigs/gateway-api/releases/download/${gateway_api_version}/standard-install.yaml"
-  kubectl apply --dry-run=client -k "$ROOT_DIR/platform/gateway-api" >/dev/null
+
+  for crd in \
+    gatewayclasses.gateway.networking.k8s.io \
+    gateways.gateway.networking.k8s.io \
+    grpcroutes.gateway.networking.k8s.io \
+    httproutes.gateway.networking.k8s.io \
+    referencegrants.gateway.networking.k8s.io; do
+    kubectl wait --for=condition=Established --timeout=180s "crd/${crd}" >/dev/null
+  done
+
+  # Give API discovery a short window to pick up newly established CRDs.
+  for attempt in {1..12}; do
+    if kubectl api-resources --api-group=gateway.networking.k8s.io | grep -q "HTTPRoute"; then
+      break
+    fi
+    sleep 2
+  done
+
+  # Retry client-side validation to avoid transient "no matches for kind HTTPRoute".
+  for attempt in {1..10}; do
+    if kubectl apply --dry-run=client -k "$ROOT_DIR/platform/gateway-api" >/dev/null 2>&1; then
+      break
+    fi
+    if [[ "$attempt" -eq 10 ]]; then
+      err "Gateway API resources validation failed after retries."
+      exit 1
+    fi
+    warn "Gateway API CRDs not fully ready yet (attempt ${attempt}/10), retrying..."
+    sleep 3
+  done
+
   kubectl apply -k "$ROOT_DIR/platform/gateway-api"
   kubectl get gatewayclass
   kubectl get gateway -n gateway-system
