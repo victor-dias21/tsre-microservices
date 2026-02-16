@@ -391,12 +391,31 @@ run_install_datadog() {
 }
 
 run_deploy_tsre() {
-  local values_args
+  local values_args sync_status health_status attempt
   kubectl create ns tsre --dry-run=client -o yaml | kubectl apply -f -
 
   log "Building local paymentservice image for kind (tsre/paymentservice:kind)"
   docker build -t tsre/paymentservice:kind -f "$ROOT_DIR/../src/paymentservice/Dockerfile.kind" "$ROOT_DIR/../src/paymentservice"
   kind load docker-image tsre/paymentservice:kind --name kind-tsre
+
+  # If Argo CD ApplicationSet is managing the app, avoid double-apply with Helm.
+  if kubectl -n argocd get application tsre-microservices >/dev/null 2>&1; then
+    log "Argo CD application tsre-microservices detected; waiting for Sync/Healthy state"
+    for attempt in {1..40}; do
+      sync_status="$(kubectl -n argocd get application tsre-microservices -o jsonpath='{.status.sync.status}' 2>/dev/null || true)"
+      health_status="$(kubectl -n argocd get application tsre-microservices -o jsonpath='{.status.health.status}' 2>/dev/null || true)"
+      log "Argo state attempt ${attempt}/40: sync=${sync_status:-unknown} health=${health_status:-unknown}"
+
+      if [[ "$sync_status" == "Synced" && "$health_status" == "Healthy" ]]; then
+        kubectl -n tsre get deploy,pods,svc
+        return
+      fi
+      sleep 6
+    done
+    err "Argo CD application tsre-microservices did not become Synced/Healthy in time"
+    kubectl -n argocd get application tsre-microservices -o yaml || true
+    exit 1
+  fi
 
   values_args=(-f "$ROOT_DIR/apps/tsre-microservices/values.yaml")
   if [[ -f "$ROOT_DIR/app-values/tsre-local.yaml" ]]; then
