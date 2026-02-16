@@ -355,6 +355,10 @@ run_deploy_tsre() {
   local values_args
   kubectl create ns tsre --dry-run=client -o yaml | kubectl apply -f -
 
+  log "Building local paymentservice image for kind (tsre/paymentservice:kind)"
+  docker build -t tsre/paymentservice:kind -f "$ROOT_DIR/../src/paymentservice/Dockerfile.kind" "$ROOT_DIR/../src/paymentservice"
+  kind load docker-image tsre/paymentservice:kind --name kind-tsre
+
   values_args=(-f "$ROOT_DIR/apps/tsre-microservices/values.yaml")
   if [[ -f "$ROOT_DIR/app-values/tsre-local.yaml" ]]; then
     values_args+=(-f "$ROOT_DIR/app-values/tsre-local.yaml")
