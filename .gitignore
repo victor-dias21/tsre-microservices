@@ -22,5 +22,9 @@ release/wi-kubernetes-manifests.yaml
 *.pem
 minikube-*
 *.env
+infra-k8s/.env
 kubernetes-manifests-build-locally/
 src/frontend/static/styles/styles_new_style.css
+# Generated Helm deps
+infra-k8s/platform/datadog/Chart.lock
+infra-k8s/platform/datadog/charts/
