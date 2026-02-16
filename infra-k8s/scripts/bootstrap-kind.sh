@@ -400,21 +400,30 @@ run_deploy_tsre() {
 
   # If Argo CD ApplicationSet is managing the app, avoid double-apply with Helm.
   if kubectl -n argocd get application tsre-microservices >/dev/null 2>&1; then
-    log "Argo CD application tsre-microservices detected; waiting for Sync/Healthy state"
+    log "Argo CD application tsre-microservices detected; waiting for Synced state"
     for attempt in {1..40}; do
       sync_status="$(kubectl -n argocd get application tsre-microservices -o jsonpath='{.status.sync.status}' 2>/dev/null || true)"
       health_status="$(kubectl -n argocd get application tsre-microservices -o jsonpath='{.status.health.status}' 2>/dev/null || true)"
       log "Argo state attempt ${attempt}/40: sync=${sync_status:-unknown} health=${health_status:-unknown}"
 
-      if [[ "$sync_status" == "Synced" && "$health_status" == "Healthy" ]]; then
-        kubectl -n tsre get deploy,pods,svc
-        return
+      if [[ "$sync_status" == "Synced" ]]; then
+        break
       fi
       sleep 6
     done
-    err "Argo CD application tsre-microservices did not become Synced/Healthy in time"
-    kubectl -n argocd get application tsre-microservices -o yaml || true
-    exit 1
+
+    if [[ "$sync_status" != "Synced" ]]; then
+      err "Argo CD application tsre-microservices did not become Synced in time"
+      kubectl -n argocd get application tsre-microservices -o yaml || true
+      exit 1
+    fi
+
+    # CI-focused readiness gate: wait core workloads required by smoke test.
+    kubectl -n tsre rollout status deploy/frontend --timeout=10m
+    kubectl -n tsre rollout status deploy/checkoutservice --timeout=10m
+    kubectl -n tsre rollout status deploy/paymentservice --timeout=10m
+    kubectl -n tsre get deploy,pods,svc
+    return
   fi
 
   values_args=(-f "$ROOT_DIR/apps/tsre-microservices/values.yaml")
