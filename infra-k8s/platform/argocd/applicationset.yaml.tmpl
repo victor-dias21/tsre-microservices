@@ -9,13 +9,13 @@ spec:
         elements:
           - name: platform-gateway-api
             namespace: gateway-system
-            path: platform/gateway-api
+            path: infra-k8s/platform/gateway-api
           - name: platform-datadog
             namespace: datadog
-            path: platform/datadog
+            path: infra-k8s/platform/datadog
           - name: tsre-microservices
             namespace: tsre
-            path: apps/tsre-microservices
+            path: infra-k8s/apps/tsre-microservices
   template:
     metadata:
       name: '{{name}}'
