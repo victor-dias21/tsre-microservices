@@ -209,6 +209,11 @@ ensure_docker_ready() {
 }
 
 require_datadog_keys() {
+  # For CI/local runs where Datadog isn't needed.
+  if [[ "${SKIP_DATADOG:-0}" == "1" ]]; then
+    warn "SKIP_DATADOG=1: skipping Datadog secret/key validation"
+    return
+  fi
   if [[ -z "${DD_API_KEY:-}" ]]; then
     err "DD_API_KEY is required. Export it before running."
     err "Example: DD_API_KEY=xxx DD_APP_KEY=yyy ./infra-k8s/scripts/bootstrap-kind.sh"
@@ -222,6 +227,10 @@ require_datadog_keys() {
 }
 
 create_datadog_secret() {
+  if [[ "${SKIP_DATADOG:-0}" == "1" ]]; then
+    warn "SKIP_DATADOG=1: not creating datadog-secret"
+    return
+  fi
   kubectl create ns datadog --dry-run=client -o yaml | kubectl apply -f -
   kubectl -n datadog create secret generic datadog-secret \
     --from-literal=api-key="$DD_API_KEY" \
@@ -355,6 +364,10 @@ run_deploy_tsre() {
   local values_args
   kubectl create ns tsre --dry-run=client -o yaml | kubectl apply -f -
 
+  log "Building local paymentservice image for kind (tsre/paymentservice:kind)"
+  docker build -t tsre/paymentservice:kind -f "$ROOT_DIR/../src/paymentservice/Dockerfile.kind" "$ROOT_DIR/../src/paymentservice"
+  kind load docker-image tsre/paymentservice:kind --name kind-tsre
+
   values_args=(-f "$ROOT_DIR/apps/tsre-microservices/values.yaml")
   if [[ -f "$ROOT_DIR/app-values/tsre-local.yaml" ]]; then
     values_args+=(-f "$ROOT_DIR/app-values/tsre-local.yaml")
@@ -386,9 +399,13 @@ run_smoke_test() {
     exit 1
   fi
   log "[OK] frontend responded with HTTP 200"
-  log "Datadog cluster-side check"
-  kubectl -n datadog get pods
-  log "Manual Datadog UI checks required: cluster metrics, tsre logs and traces"
+  if [[ "${SKIP_DATADOG:-0}" != "1" ]]; then
+    log "Datadog cluster-side check"
+    kubectl -n datadog get pods
+    log "Manual Datadog UI checks required: cluster metrics, tsre logs and traces"
+  else
+    log "SKIP_DATADOG=1: skipping Datadog checks"
+  fi
   if [[ -n "${PF_PID:-}" ]]; then
     kill "${PF_PID}" >/dev/null 2>&1 || true
     PF_PID=""
@@ -434,7 +451,11 @@ main() {
 
   CURRENT_STEP="install-datadog"
   log "[STEP 8/10] Installing Datadog agents/components"
-  run_install_datadog
+  if [[ "${SKIP_DATADOG:-0}" != "1" ]]; then
+    run_install_datadog
+  else
+    warn "SKIP_DATADOG=1: skipping Datadog install"
+  fi
 
   CURRENT_STEP="deploy-tsre"
   log "[STEP 9/10] Deploying TSRE application"

@@ -25,6 +25,22 @@ public class PaymentController {
     @Autowired
     PaymentRecordRepository repo;
 
+    private static boolean envBool(String name, boolean def) {
+        String v = System.getenv(name);
+        if (v == null || v.isBlank()) return def;
+        return "1".equals(v) || "true".equalsIgnoreCase(v) || "yes".equalsIgnoreCase(v);
+    }
+
+    private static double envDouble(String name, double def) {
+        String v = System.getenv(name);
+        if (v == null || v.isBlank()) return def;
+        try {
+            return Double.parseDouble(v);
+        } catch (Exception e) {
+            return def;
+        }
+    }
+
     public String clearPayment(ChargeRequest request) throws LockTimeoutException {
         String currency = request.getAmount().getCurrencyCode();
         Long amount = request.getAmount().getUnits();
@@ -32,7 +48,8 @@ public class PaymentController {
         String ccNumber = request.getCreditCard().getCreditCardNumber();
 
         // perform payment "API call"
-        boolean rateLimited = true; // should be set to false. Set to true for testing by Chris
+        // This service intentionally contains failure modes; keep them configurable so local dev can be stable.
+        boolean rateLimited = envBool("TSRE_PAYMENT_RATE_LIMITED", false);
         try {
             URL u = new URL("https://developer.paypal.com/");
             InputStream in = u.openStream();
@@ -48,8 +65,10 @@ public class PaymentController {
             e.printStackTrace();
         }
 
+        // Failure injection: disabled by default. Example: TSRE_PAYMENT_LOCK_TIMEOUT_PROB=0.5
+        double lockTimeoutProb = envDouble("TSRE_PAYMENT_LOCK_TIMEOUT_PROB", 0.0);
         Random r = new Random(System.currentTimeMillis());
-        if(r.nextBoolean()) {
+        if (lockTimeoutProb > 0.0 && r.nextDouble() < lockTimeoutProb) {
             for(double i=0; i<500000; i++) { // let's waste some time to make it look like we're waiting for a table lock
                 Math.sqrt(i);
             }

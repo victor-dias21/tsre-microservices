@@ -96,6 +96,7 @@ data:
   mariadb.cnf: |
     [mariadb]
     performance_schema=ON
+    innodb_lock_wait_timeout=120
     max_digest_length=4096
     performance_schema_max_digest_length=4096
     performance-schema-instrument='stage/%=ON'

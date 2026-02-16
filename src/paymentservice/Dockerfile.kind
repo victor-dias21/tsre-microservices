@@ -1,0 +1,21 @@
+# Build a deterministic local image for kind (no reliance on prebuilt JARs).
+FROM maven:3.9.9-eclipse-temurin-17 AS build
+
+WORKDIR /src
+COPY pom.xml .
+COPY .mvn .mvn
+COPY mvnw mvnw
+COPY src src
+# Official maven images set MAVEN_CONFIG=/root/.m2; mvnw treats MAVEN_CONFIG as CLI args.
+# Clear it to avoid Maven interpreting /root/.m2 as a lifecycle phase.
+RUN chmod +x mvnw && MAVEN_CONFIG= ./mvnw -q -DskipTests package
+
+FROM eclipse-temurin:17-jre
+WORKDIR /app
+COPY --from=build /src/target/*.jar /app/paymentservice.jar
+# App writes backups under /app/data; create it and make it writable for runAsUser=1000.
+RUN mkdir -p /app/data && chown -R 1000:1000 /app
+ENTRYPOINT ["java","-jar","/app/paymentservice.jar"]
+
+# grpc-server-spring-boot-starter defaults to 9090 in this app
+EXPOSE 9090

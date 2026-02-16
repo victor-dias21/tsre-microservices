@@ -1,0 +1,89 @@
+name: ci-kind-bootstrap
+
+on:
+  pull_request:
+    branches: [ main ]
+  push:
+    branches: [ main ]
+  workflow_dispatch: {}
+
+concurrency:
+  group: ci-kind-bootstrap-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  kind-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      SKIP_DATADOG: "1"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install dependencies (kubectl/helm/kind)
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -y
+          sudo apt-get install -y curl git
+
+          # kubectl
+          curl -sSLo /tmp/kubectl "https://dl.k8s.io/release/$(curl -sSL https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+          sudo install -m 0755 /tmp/kubectl /usr/local/bin/kubectl
+
+          # helm
+          curl -sSLo /tmp/get_helm.sh https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3
+          chmod +x /tmp/get_helm.sh
+          sudo /tmp/get_helm.sh
+
+          # kind
+          KIND_VERSION="v0.22.0"
+          curl -sSLo /tmp/kind "https://kind.sigs.k8s.io/dl/${KIND_VERSION}/kind-linux-amd64"
+          sudo install -m 0755 /tmp/kind /usr/local/bin/kind
+
+          kubectl version --client
+          helm version
+          kind version
+
+      - name: Bootstrap cluster and deploy (kind)
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./infra-k8s/scripts/bootstrap-kind.sh
+
+      - name: Smoke checkout (frontend)
+        shell: bash
+        run: |
+          set -euo pipefail
+          kubectl -n tsre port-forward svc/frontend 8088:80 >/tmp/frontend-pf.log 2>&1 &
+          PF_PID=$!
+          trap 'kill $PF_PID >/dev/null 2>&1 || true' EXIT
+
+          # Wait frontend to be reachable
+          for i in $(seq 1 60); do
+            code="$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:8088/ || true)"
+            if [[ "$code" == "200" ]]; then
+              break
+            fi
+            sleep 1
+          done
+          curl -fsS http://127.0.0.1:8088/ >/dev/null
+
+          # Checkout must succeed (best-effort retries to avoid transient startup)
+          for i in $(seq 1 10); do
+            code="$(curl -s -o /dev/null -w "%{http_code}" -X POST http://127.0.0.1:8088/cart/checkout || true)"
+            echo "checkout_try=$i http=$code"
+            if [[ "$code" == "200" ]]; then
+              exit 0
+            fi
+            sleep 2
+          done
+
+          echo "Checkout failed"
+          kubectl -n tsre get pods -o wide || true
+          kubectl -n tsre logs deploy/frontend --tail=200 || true
+          kubectl -n tsre logs deploy/checkoutservice --tail=200 || true
+          kubectl -n tsre logs deploy/paymentservice --tail=200 || true
+          exit 1
+
