@@ -1,0 +1,24 @@
+datadog:
+  site: datadoghq.com
+  apiKeyExistingSecret: datadog-secret
+  appKeyExistingSecret: datadog-secret
+  clusterName: kind-tsre
+  tags:
+    - env:local
+    - service:tsre
+    - team:sre
+  logs:
+    enabled: true
+    containerCollectAll: true
+  apm:
+    socketEnabled: true
+    portEnabled: true
+  processAgent:
+    enabled: true
+    processCollection: true
+  orchestratorExplorer:
+    enabled: true
+clusterAgent:
+  enabled: true
+  admissionController:
+    enabled: true

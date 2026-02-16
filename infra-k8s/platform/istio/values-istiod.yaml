@@ -1,0 +1,8 @@
+global:
+  proxy:
+    autoInject: enabled
+meshConfig:
+  accessLogFile: /dev/stdout
+pilot:
+  env:
+    PILOT_ENABLE_GATEWAY_API: "true"

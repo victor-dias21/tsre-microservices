@@ -1,0 +1,7 @@
+datadog:
+  site: datadoghq.com
+  clusterName: kind-tsre
+  tags:
+    - env:local
+    - service:tsre
+    - team:sre

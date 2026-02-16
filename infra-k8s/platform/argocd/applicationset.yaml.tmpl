@@ -1,0 +1,36 @@
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: tsre-applications
+  namespace: argocd
+spec:
+  generators:
+    - list:
+        elements:
+          - name: platform-gateway-api
+            namespace: gateway-system
+            path: platform/gateway-api
+          - name: platform-datadog
+            namespace: datadog
+            path: platform/datadog
+          - name: tsre-microservices
+            namespace: tsre
+            path: apps/tsre-microservices
+  template:
+    metadata:
+      name: '{{name}}'
+    spec:
+      project: tsre-platform
+      source:
+        repoURL: __REPO_URL__
+        targetRevision: main
+        path: '{{path}}'
+      destination:
+        server: https://kubernetes.default.svc
+        namespace: '{{namespace}}'
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true
+        syncOptions:
+          - CreateNamespace=true
