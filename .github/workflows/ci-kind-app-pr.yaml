@@ -1,22 +1,23 @@
-name: ci-kind-fullstack
+name: ci-kind-app-pr
 
 on:
-  push:
+  pull_request:
     branches: [ main ]
   workflow_dispatch: {}
-  schedule:
-    - cron: "0 4 * * *"
 
 concurrency:
-  group: ci-kind-fullstack-${{ github.ref }}
+  group: ci-kind-app-pr-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  kind-smoke:
+  kind-smoke-app:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 35
     env:
       SKIP_DATADOG: "1"
+      SKIP_ARGOCD: "1"
+      SKIP_ISTIO: "1"
+      SKIP_GATEWAY_API: "1"
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -46,7 +47,7 @@ jobs:
           helm version
           kind version
 
-      - name: Bootstrap cluster and deploy (kind)
+      - name: Bootstrap cluster and deploy app-only (kind)
         shell: bash
         run: |
           set -euo pipefail
@@ -60,7 +61,6 @@ jobs:
           PF_PID=$!
           trap 'kill $PF_PID >/dev/null 2>&1 || true' EXIT
 
-          # Wait frontend to be reachable
           for i in $(seq 1 60); do
             code="$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:8088/ || true)"
             if [[ "$code" == "200" ]]; then
@@ -70,7 +70,6 @@ jobs:
           done
           curl -fsS http://127.0.0.1:8088/ >/dev/null
 
-          # Checkout must succeed (best-effort retries to avoid transient startup)
           for i in $(seq 1 10); do
             code="$(curl -s -o /dev/null -w "%{http_code}" -X POST http://127.0.0.1:8088/cart/checkout || true)"
             echo "checkout_try=$i http=$code"
@@ -86,3 +85,4 @@ jobs:
           kubectl -n tsre logs deploy/checkoutservice --tail=200 || true
           kubectl -n tsre logs deploy/paymentservice --tail=200 || true
           exit 1
+

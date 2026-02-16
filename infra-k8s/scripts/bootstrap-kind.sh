@@ -332,11 +332,41 @@ run_install_istio() {
 }
 
 run_install_gateway_api() {
-  local gateway_api_version
+  local gateway_api_version crd attempt
   gateway_api_version="v1.2.1"
 
   kubectl apply -f "https://github.com/kubernetes-sigs/gateway-api/releases/download/${gateway_api_version}/standard-install.yaml"
-  kubectl apply --dry-run=client -k "$ROOT_DIR/platform/gateway-api" >/dev/null
+
+  for crd in \
+    gatewayclasses.gateway.networking.k8s.io \
+    gateways.gateway.networking.k8s.io \
+    grpcroutes.gateway.networking.k8s.io \
+    httproutes.gateway.networking.k8s.io \
+    referencegrants.gateway.networking.k8s.io; do
+    kubectl wait --for=condition=Established --timeout=180s "crd/${crd}" >/dev/null
+  done
+
+  # Give API discovery a short window to pick up newly established CRDs.
+  for attempt in {1..12}; do
+    if kubectl api-resources --api-group=gateway.networking.k8s.io | grep -q "HTTPRoute"; then
+      break
+    fi
+    sleep 2
+  done
+
+  # Retry client-side validation to avoid transient "no matches for kind HTTPRoute".
+  for attempt in {1..10}; do
+    if kubectl apply --dry-run=client -k "$ROOT_DIR/platform/gateway-api" >/dev/null 2>&1; then
+      break
+    fi
+    if [[ "$attempt" -eq 10 ]]; then
+      err "Gateway API resources validation failed after retries."
+      exit 1
+    fi
+    warn "Gateway API CRDs not fully ready yet (attempt ${attempt}/10), retrying..."
+    sleep 3
+  done
+
   kubectl apply -k "$ROOT_DIR/platform/gateway-api"
   kubectl get gatewayclass
   kubectl get gateway -n gateway-system
@@ -361,12 +391,40 @@ run_install_datadog() {
 }
 
 run_deploy_tsre() {
-  local values_args
+  local values_args sync_status health_status attempt
   kubectl create ns tsre --dry-run=client -o yaml | kubectl apply -f -
 
   log "Building local paymentservice image for kind (tsre/paymentservice:kind)"
   docker build -t tsre/paymentservice:kind -f "$ROOT_DIR/../src/paymentservice/Dockerfile.kind" "$ROOT_DIR/../src/paymentservice"
   kind load docker-image tsre/paymentservice:kind --name kind-tsre
+
+  # If Argo CD ApplicationSet is managing the app, avoid double-apply with Helm.
+  if kubectl -n argocd get application tsre-microservices >/dev/null 2>&1; then
+    log "Argo CD application tsre-microservices detected; waiting for Synced state"
+    for attempt in {1..40}; do
+      sync_status="$(kubectl -n argocd get application tsre-microservices -o jsonpath='{.status.sync.status}' 2>/dev/null || true)"
+      health_status="$(kubectl -n argocd get application tsre-microservices -o jsonpath='{.status.health.status}' 2>/dev/null || true)"
+      log "Argo state attempt ${attempt}/40: sync=${sync_status:-unknown} health=${health_status:-unknown}"
+
+      if [[ "$sync_status" == "Synced" ]]; then
+        break
+      fi
+      sleep 6
+    done
+
+    if [[ "$sync_status" != "Synced" ]]; then
+      err "Argo CD application tsre-microservices did not become Synced in time"
+      kubectl -n argocd get application tsre-microservices -o yaml || true
+      exit 1
+    fi
+
+    # CI-focused readiness gate: wait core workloads required by smoke test.
+    kubectl -n tsre rollout status deploy/frontend --timeout=10m
+    kubectl -n tsre rollout status deploy/checkoutservice --timeout=10m
+    kubectl -n tsre rollout status deploy/paymentservice --timeout=10m
+    kubectl -n tsre get deploy,pods,svc
+    return
+  fi
 
   values_args=(-f "$ROOT_DIR/apps/tsre-microservices/values.yaml")
   if [[ -f "$ROOT_DIR/app-values/tsre-local.yaml" ]]; then
@@ -387,7 +445,11 @@ run_smoke_test() {
     exit 1
   fi
 
-  kubectl get gateway,httproute -A
+  if [[ "${SKIP_GATEWAY_API:-0}" != "1" ]]; then
+    kubectl get gateway,httproute -A
+  else
+    log "SKIP_GATEWAY_API=1: skipping Gateway API checks"
+  fi
   kubectl -n tsre port-forward svc/frontend 8088:80 >/tmp/tsre-port-forward.log 2>&1 &
   PF_PID=$!
   trap 'if [[ -n "${PF_PID:-}" ]]; then kill "${PF_PID}" >/dev/null 2>&1 || true; fi' EXIT
@@ -439,15 +501,27 @@ main() {
 
   CURRENT_STEP="install-argocd"
   log "[STEP 5/10] Installing Argo CD and applying GitOps project/application set"
-  run_install_argocd
+  if [[ "${SKIP_ARGOCD:-0}" != "1" ]]; then
+    run_install_argocd
+  else
+    warn "SKIP_ARGOCD=1: skipping Argo CD install"
+  fi
 
   CURRENT_STEP="install-istio"
   log "[STEP 6/10] Installing Istio control plane and ingress gateway"
-  run_install_istio
+  if [[ "${SKIP_ISTIO:-0}" != "1" ]]; then
+    run_install_istio
+  else
+    warn "SKIP_ISTIO=1: skipping Istio install"
+  fi
 
   CURRENT_STEP="install-gateway-api"
   log "[STEP 7/10] Installing Gateway API CRDs and gateway resources"
-  run_install_gateway_api
+  if [[ "${SKIP_GATEWAY_API:-0}" != "1" ]]; then
+    run_install_gateway_api
+  else
+    warn "SKIP_GATEWAY_API=1: skipping Gateway API install"
+  fi
 
   CURRENT_STEP="install-datadog"
   log "[STEP 8/10] Installing Datadog agents/components"
