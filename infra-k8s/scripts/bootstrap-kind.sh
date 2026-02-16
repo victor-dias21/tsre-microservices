@@ -445,7 +445,11 @@ run_smoke_test() {
     exit 1
   fi
 
-  kubectl get gateway,httproute -A
+  if [[ "${SKIP_GATEWAY_API:-0}" != "1" ]]; then
+    kubectl get gateway,httproute -A
+  else
+    log "SKIP_GATEWAY_API=1: skipping Gateway API checks"
+  fi
   kubectl -n tsre port-forward svc/frontend 8088:80 >/tmp/tsre-port-forward.log 2>&1 &
   PF_PID=$!
   trap 'if [[ -n "${PF_PID:-}" ]]; then kill "${PF_PID}" >/dev/null 2>&1 || true; fi' EXIT
@@ -497,15 +501,27 @@ main() {
 
   CURRENT_STEP="install-argocd"
   log "[STEP 5/10] Installing Argo CD and applying GitOps project/application set"
-  run_install_argocd
+  if [[ "${SKIP_ARGOCD:-0}" != "1" ]]; then
+    run_install_argocd
+  else
+    warn "SKIP_ARGOCD=1: skipping Argo CD install"
+  fi
 
   CURRENT_STEP="install-istio"
   log "[STEP 6/10] Installing Istio control plane and ingress gateway"
-  run_install_istio
+  if [[ "${SKIP_ISTIO:-0}" != "1" ]]; then
+    run_install_istio
+  else
+    warn "SKIP_ISTIO=1: skipping Istio install"
+  fi
 
   CURRENT_STEP="install-gateway-api"
   log "[STEP 7/10] Installing Gateway API CRDs and gateway resources"
-  run_install_gateway_api
+  if [[ "${SKIP_GATEWAY_API:-0}" != "1" ]]; then
+    run_install_gateway_api
+  else
+    warn "SKIP_GATEWAY_API=1: skipping Gateway API install"
+  fi
 
   CURRENT_STEP="install-datadog"
   log "[STEP 8/10] Installing Datadog agents/components"
